@@ -40,10 +40,10 @@ typedef struct {  //define o tipo de dados "registro de dados"
 
 //Funcao para auxiliar no debug do codigo (desconsiderar)
 void printRegistro(regDados *registro) {
-    printf("\n\nRemovido: %c\n", registro->removido);
+    printf("\nRemovido: %c\n", registro->removido);
     printf("Tamanho: %d\n", registro->tamanhoRegistro);
     printf("encadeamentoLista: %lld\n", registro->encadeamentoLista);
-    printf("\nId Servidor: %d\n", registro->idServidor);
+    printf("Id Servidor: %d\n", registro->idServidor);
     printf("Salario Servidor: %.2lf\n", registro->salarioServidor);
     printf("Telefone Servidor: %s\n", registro->telefoneServidor);
 
@@ -55,7 +55,7 @@ void printRegistro(regDados *registro) {
     if (registro->cargoServidor != NULL) {
         printf("-- Tamanho cargo: %d\n", registro->tamCampo5);
         printf("-- Tag campo: %c\n", registro->tagCampo5);
-        printf("Cargo Servidor: %s\n", registro->cargoServidor);
+        printf("Cargo Servidor: \"%s\"\n", registro->cargoServidor);
     }
     printf("\n");
 }
@@ -2037,7 +2037,6 @@ int mudaRegistro(regDados *registro, char *nomeCampo, byte *valorCampo) {
     }
     else if (strcmp(nomeCampo, "nomeServidor") == 0) {
         if (strcmp(valorCampo, "NULO") == 0) {  //se o valor for nulo...
-            //if (registro->nomeServidor != NULL) free(registro->nomeServidor);
             registro->nomeServidor = NULL;
         }
         else {
@@ -2049,7 +2048,6 @@ int mudaRegistro(regDados *registro, char *nomeCampo, byte *valorCampo) {
     }
     else if (strcmp(nomeCampo, "cargoServidor") == 0) {
         if (strcmp(valorCampo, "NULO") == 0) {  //se o valor for nulo...
-            //if (registro->cargoServidor != NULL) free(registro->cargoServidor);
             registro->cargoServidor = NULL;
         }
         else {
@@ -2713,9 +2711,18 @@ void atualizaReg() {
                 }
             }
             else {
-                                            int count = 0;
+
+                    int count = 0;
                 while (!feof(binFile)) {
                     if (b == '-') {     //se ele nao esta removido...
+                        /*if (strcmp(valorCampo, "ENGENHEIRO") == 0 && ( strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA\"") == 0 || strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA") == 0)) {
+                            printf("\n\nByte Offset atual: %ld\n", ftell(binFile)-1);
+                            regDados reg;
+                            fseek(binFile, -1, SEEK_CUR);
+                            leRegistro(binFile, &reg);
+                            fseek(binFile, 1, SEEK_CUR);
+                            printRegistro(&reg);
+                        }*/
                         int indicTam;
                         fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
                         lidos += 4;
@@ -2870,7 +2877,6 @@ void atualizaReg() {
         fseek(binFile, TAMPAG, SEEK_SET);    //volto o ponteiro de leitura para o inicio da segunda pagina de disco (a que inicia os registros de dados)
     }
 
-    //printLista(binFile);
     binarioNaTela1(binFile);
 
     //antes de fechar o arquivo, coloco seu status para '1'
