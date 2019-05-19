@@ -22,27 +22,7 @@ case7out:
 	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-7.bin
 	make all
 	make run < 7.in
-bin8:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-8.bin
-	make all
-case8:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-8.bin
-	make all
-	make run < 8.in > 8meu.out
-	diff 8meu.out ./Casos/8.out
-case8out:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-8.bin
-	make all
-	make run < 8.in
-bin9:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-9.bin
-	make all
-case9:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-9.bin
-	make all
-	make run < 9.in > 9meu.out
-	diff 9meu.out ./Casos/9.out
-case9out:
-	cp -t /home/vitorsan/Desktop/Trabalhos-USP/Files/Trabalho2 ./Arquivos-binarios/binario-9.bin
-	make all
-	make run < 9.in
+comp:
+	hexdump -Cv binario-7.bin > 1.txt
+	hexdump -Cv binario-7-gaba.bin > 2.txt
+	meld 1.txt 2.txt

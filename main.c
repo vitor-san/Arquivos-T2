@@ -2712,17 +2712,16 @@ void atualizaReg() {
             }
             else {
 
-                    int count = 0;
                 while (!feof(binFile)) {
                     if (b == '-') {     //se ele nao esta removido...
-                        /*if (strcmp(valorCampo, "ENGENHEIRO") == 0 && ( strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA\"") == 0 || strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA") == 0)) {
+                        /* if (strcmp(valorCampo, "ENGENHEIRO") == 0 && ( strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA\"") == 0 || strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA") == 0)) {
                             printf("\n\nByte Offset atual: %ld\n", ftell(binFile)-1);
                             regDados reg;
                             fseek(binFile, -1, SEEK_CUR);
                             leRegistro(binFile, &reg);
                             fseek(binFile, 1, SEEK_CUR);
                             printRegistro(&reg);
-                        }*/
+                        } */
                         int indicTam;
                         fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
                         lidos += 4;
@@ -2789,9 +2788,10 @@ void atualizaReg() {
                                             if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
                                                 fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
                                                 leRegistro(binFile, &registro); //importo o registro do arquivo binario
+                                                    if (registro.idServidor == 2416299) printRegistro(&registro);
                                                 int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-                                                            count++;
-
+                                                    if (registro.idServidor == 2416299) printRegistro(&registro);
+                                                    if (registro.idServidor == 2416299) printf("Diff: %d\n", diff);
                                                 if (diff < 0) {     //o registro novo eh maior do que o original
                                                     long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
                                                     fputc('*', binFile);    //marco o registro como REMOVIDO
@@ -2827,7 +2827,6 @@ void atualizaReg() {
                                         fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
                                         leRegistro(binFile, &registro); //importo o registro do arquivo binario
                                         int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-                                            count++;
 
                                         if (diff < 0) {     //o registro novo eh maior do que o original
                                             long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
@@ -2865,7 +2864,7 @@ void atualizaReg() {
 
                     b = fgetc(binFile);
                 }
-                printf("CARGOS \"ENGENHEIRO\" ENCONTRADOS: %d\n", count);
+
             }
 
         }
