@@ -50,7 +50,7 @@ void printRegistro(regDados *registro) {
     if (registro->nomeServidor != NULL) {
         printf("-- Tamanho nome: %d\n", registro->tamCampo4);
         printf("-- Tag campo: %c\n", registro->tagCampo4);
-        printf("Nome Servidor: %s\n", registro->nomeServidor);
+        printf("Nome Servidor: \"%s\"\n", registro->nomeServidor);
     }
     if (registro->cargoServidor != NULL) {
         printf("-- Tamanho cargo: %d\n", registro->tamCampo5);
@@ -505,6 +505,94 @@ void mostraBin() {
 }
 
 /*
+    Le os campos de um registro presente em um
+    arquivo binario anteriormente gerado por
+    este programa e guarda seus valores em uma
+    estrutura passada por parametro pelo usuario.
+    A funcao assume que o ponteiro de leitura do
+    arquivo estara no inicio do registro ao ser
+    chamada.
+
+    Parametros:
+        FILE *file - arquivo binario contendo o
+    registro a ser lido
+        regDados *registro - estrutura para onde
+    devem ser copiados os dados do registro
+*/
+void leRegistro(FILE *file, regDados *registro) {
+    long ini = ftell(file);    //guardo a posicao de inicio do registro
+
+    registro->removido = fgetc(file);   //leio o campo "removido"
+    fread(&(registro->tamanhoRegistro), 4, 1, file);    //leio o indicador de tamanho do registro
+    fread(&(registro->encadeamentoLista), 8, 1, file);  //leio o campo "encadeamentoLista"
+    fread(&(registro->idServidor), 4, 1, file);     //leio o campo "idServidor"
+    fread(&(registro->salarioServidor), 8, 1, file);    //leio o campo "salarioServidor"
+    fread(registro->telefoneServidor, 1, 14, file);     //leio o campo "telefoneServidor"
+
+    if ((ftell(file)-ini) == (registro->tamanhoRegistro+5)) {    //se o registro ja acabou, os campos "nomeServidor" e "cargoServidor" sao nulos e, portanto, nao presentes no arquivo
+        //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
+        //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
+        registro->nomeServidor = NULL;
+        registro->cargoServidor = NULL;
+    }
+    else {
+        char c = fgetc(file);
+        if (c == '@') {     //eh o ultimo registro de uma pagina de disco
+            //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
+            //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
+            registro->nomeServidor = NULL;
+            registro->cargoServidor = NULL;
+        }
+        else {
+            ungetc(c, file);    //devolvo o caracter para a entrada
+
+            int tamCampo;
+            fread(&(tamCampo), 4, 1, file);     //leio o indicador de tamanho do campo
+            char tag = fgetc(file);     //leio a tag do campo
+
+            if (tag == 'n') {
+                registro->tamCampo4 = tamCampo;
+                registro->tagCampo4 = tag;
+                registro->nomeServidor = malloc(100*sizeof(char));
+                fread(registro->nomeServidor, 1, tamCampo-1, file);   //leio o campo "nomeServidor"
+
+                if ((ftell(file)-ini) == (registro->tamanhoRegistro+5)) {    //se o registro ja acabou, o campo "cargoServidor" eh nulo e, portanto, nao presente no arquivo
+                    //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
+                    registro->cargoServidor = NULL;
+                }
+                else {
+                    c = fgetc(file);
+                    if (c == '@') {     //eh o ultimo registro de uma pagina de disco
+                        ///if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
+                        registro->cargoServidor = NULL;
+                    }
+                    else {
+                        ungetc(c, file);    //"devolvo" o byte lido para o arquivo
+                        fread(&(registro->tamCampo5), 4, 1, file);     //leio o indicador de tamanho do campo
+                        registro->tagCampo5 = fgetc(file);     //leio a tag do campo
+                        registro->cargoServidor = malloc(100*sizeof(char));
+                        fread(registro->cargoServidor, 1, registro->tamCampo5-1, file);   //leio o campo "cargoServidor"
+                    }
+                }
+            }
+            else {
+                //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
+                registro->nomeServidor = NULL;
+
+                registro->tamCampo5 = tamCampo;
+                registro->tagCampo5 = tag;
+                registro->cargoServidor = malloc(100*sizeof(char));
+                fread(registro->cargoServidor, 1, tamCampo-1, file);
+            }
+        }
+    }
+
+    fseek(file, ini, SEEK_SET);     //volto ao inicio do registro
+
+    return;
+}
+
+/*
     Funcao que imprime na tela, organizadamente,
     um registro de um arquivo binario gerado
     anteriormente por este programa. A funcao
@@ -651,6 +739,7 @@ void buscaReg() {
     char fileName[51];   //vai guardar o nome do arquivo a ser aberto
     char nomeCampo[51];    //campo a ser considerado na busca
     byte valorCampo[100];    //valor a ser considerado na busca
+    regDados registro;  //estrutura que será utilizada para guardar os registros lidos do arquivo binario
 
     scanf("%50s %50s", fileName, nomeCampo);
     scanf(" %[^\r\n]", valorCampo);     //paro de ler antes da quebra de linha
@@ -688,317 +777,102 @@ void buscaReg() {
       return;
     }
 
-    //aqui comeca a comparacao por campos
-
-    int lidos = 0;    //guardara provisoriamente quantos bytes ja se leram de um registro
     int achou = 0;    //indicara se pelo menos um registro foi achado
 
-    if (strcmp(nomeCampo, "idServidor") == 0) {     //se o campo a ser buscado eh "idServidor"...
-        while (!feof(readFile)) {
-            if (ftell(readFile)%TAMPAG == 1) acessosPagina++;   //se o ponteiro de leitura passou pelo primeiro byte de uma pagina de disco, entao conta-se mais um acesso
+    while (!feof(readFile)) {
+        ungetc(b, readFile); //"devolvo" o byte lido para o arquivo binario
+        leRegistro(readFile, &registro);
+        int indicTam = registro.tamanhoRegistro;
 
-            if (b == '-') {     //se ele nao esta removido...
-                int indicTam;
-                fread(&indicTam, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                lidos += 8;
-
-                int valor;
-                fread(&valor, 4, 1, readFile);  //leio o valor do campo "idServidor"
-                lidos += 4;
-
-                fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                if (valor == atoi(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+        if (registro.removido == '*') {   //o registro esta removido
+            fseek(readFile, indicTam+5, SEEK_CUR);   //se o registro esta removido, apenas o pulo
+        }
+        else if (registro.removido == '-') {   //o registro pode ser manipulado
+            if (!strcmp(nomeCampo, "idServidor")) {    //se o campo a ser buscado eh "idServidor"...
+                if (registro.idServidor == atoi(valorCampo)) {    //se o valor do campo no registro lido eh igual ao do dado como criterio de busca...
                     mostraRegistroMeta(readFile, &cabecalho);
                     achou = 1;
                     break;  //ja que o numero do idServidor eh unico, se acharmos um igual nao precisaremos mais continuar procurando
                 }
-
-                fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                lidos = 0;
-            }
-
-            else if (b == '*') {    //se ele esta removido...
-                int pulo = 0;
-                fread(&pulo, 4, 1, readFile);   //lera o indicador de tamanho do registro (4 bytes)
-                fseek(readFile, pulo, SEEK_CUR);    //pula o registro
-            }
-
-            b = fgetc(readFile);
-        }
-    }
-    else if (strcmp(nomeCampo, "salarioServidor") == 0) {     //se o campo a ser buscado eh "salarioServidor"...
-        while (!feof(readFile)) {
-            if (ftell(readFile)%TAMPAG == 1) acessosPagina++;   //se o ponteiro de leitura passou pelo primeiro byte de uma pagina de disco, entao conta-se mais um acesso
-
-            if (b == '-') {     //se ele nao esta removido...
-                int indicTam;
-                fread(&indicTam, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                lidos += 4;
-
-                double valor;
-                fread(&valor, 8, 1, readFile);  //leio o valor do campo "salarioServidor"
-                lidos += 8;
-
-                fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                if (valor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                    mostraRegistroMeta(readFile, &cabecalho);
-                    achou = 1;
-                }
                 else {
-                    fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                 }
-
-                lidos = 0;
             }
 
-            else if (b == '*') {    //se ele esta removido...
-                int pulo = 0;
-                fread(&pulo, 4, 1, readFile);   //lera o indicador de tamanho do registro (4 bytes)
-                fseek(readFile, pulo, SEEK_CUR);    //pula o registro
-            }
-
-            b = fgetc(readFile);
-        }
-    }
-    else if (strcmp(nomeCampo, "telefoneServidor") == 0) {     //se o campo a ser buscado eh "telefoneServidor"...
-        while (!feof(readFile)) {
-            if (ftell(readFile)%TAMPAG == 1) acessosPagina++;   //se o ponteiro de leitura passou pelo primeiro byte de uma pagina de disco, entao conta-se mais um acesso
-
-            if (b == '-') {     //se ele nao esta removido...
-                int indicTam;
-                fread(&indicTam, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                lidos += 8;
-
-                char valor[15];
-                fread(valor, 1, 14, readFile);  //leio o valor do campo "telefoneServidor"
-                valor[14] = '\0';   //"encerro" a string
-                lidos += 14;
-
-                fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                    mostraRegistroMeta(readFile, &cabecalho);
-                    achou = 1;
-                }
-                else {
-                    fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                }
-
-                lidos = 0;
-            }
-
-            else if (b == '*') {    //se ele esta removido...
-                int pulo = 0;
-                fread(&pulo, 4, 1, readFile);   //lera o indicador de tamanho do registro (4 bytes)
-                fseek(readFile, pulo, SEEK_CUR);    //pula o registro
-            }
-
-            b = fgetc(readFile);
-        }
-    }
-    else if (strcmp(nomeCampo, "nomeServidor") == 0) {     //se o campo a ser buscado eh "nomeServidor"...
-        while (!feof(readFile)) {
-            if (ftell(readFile)%TAMPAG == 1) acessosPagina++;   //se o ponteiro de leitura passou pelo primeiro byte de uma pagina de disco, entao conta-se mais um acesso
-
-            if (b == '-') {     //se ele nao esta removido...
-                int indicTam;
-                fread(&indicTam, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                lidos += 14;
-
-                if (lidos != indicTam+4) {   //se o registro nao terminou...
-                    b = fgetc(readFile);    //leio o proximo byte do registro
-                    lidos += 1;
-
-                    if (b == '@') {
-                        //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                        fseek(readFile, indicTam+4 - lidos, SEEK_CUR);
+            else if (!strcmp(nomeCampo, "salarioServidor")) {    //se o campo a ser buscado eh "salarioServidor"...
+                if (!strcmp(valorCampo, "NULO")) {  //se o valor a ser buscado eh nulo...
+                    if (registro.salarioServidor == -1) {
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
                     }
-                    else {
-                        ungetc(b, readFile);    //"devolvo" o byte lido para o arquivo
-                        lidos -= 1;
-
-                        int tamCampo;
-                        fread(&tamCampo, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                        lidos += 4;
-
-                        char tag = fgetc(readFile);   //leio a tag do campo
-                        lidos += 1;
-
-                        if (tag == 'c') {   //o campo "nomeServidor" nao existe nesse registro de dados
-                            fseek(readFile, tamCampo-1, SEEK_CUR);  //vou para o proximo registro
-                        }
-                        else {  //ele existe
-                            char valor[100];
-                            fread(valor, 1, tamCampo-1, readFile);  //leio o valor do campo "nomeServidor"
-                            lidos += (tamCampo-1);
-
-                            fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                            if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                mostraRegistroMeta(readFile, &cabecalho);
-                                achou = 1;
-                            }
-                            else {
-                                fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                            }
-                        }
-                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                 }
-
-                lidos = 0;
-            }
-            else if (b == '*') {    //se ele esta removido...
-                int pulo = 0;
-                fread(&pulo, 4, 1, readFile);   //lera o indicador de tamanho do registro (4 bytes)
-                fseek(readFile, pulo, SEEK_CUR);    //pula o registro
-            }
-
-            b = fgetc(readFile);
-        }
-    }
-    else if (strcmp(nomeCampo, "cargoServidor") == 0) {     //se o campo a ser buscado eh "cargoServidor"...
-        while (!feof(readFile)) {
-            if (ftell(readFile)%TAMPAG == 1) acessosPagina++;   //se o ponteiro de leitura passou pelo primeiro byte de uma pagina de disco, entao conta-se mais um acesso
-
-            if (b == '-') {     //se ele nao esta removido...
-                int indicTam;
-                fread(&indicTam, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                lidos += 4;
-
-                fseek(readFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                lidos += 8;
-
-                fseek(readFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                lidos += 14;
-
-                if (lidos != indicTam+4) {   //se o registro nao terminou...
-                    b = fgetc(readFile);    //leio o proximo byte do registro
-                    lidos += 1;
-
-                    if (b == '@') {
-                        //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                        fseek(readFile, indicTam+4 - lidos, SEEK_CUR);
+                else {  //o valor a ser buscado nao eh nulo
+                    if (registro.salarioServidor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
                     }
-                    else {
-                        ungetc(b, readFile);    //"devolvo" o byte lido para o arquivo
-                        lidos -= 1;
-
-                        int tamCampo;
-                        fread(&tamCampo, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                        lidos += 4;
-
-                        char tag = fgetc(readFile);   //leio a tag do campo
-                        lidos += 1;
-
-                        if (tag == 'n') {   //o campo "cargoServidor" pode nao existir
-                            fseek(readFile, tamCampo-1, SEEK_CUR);  //pulo o campo "nomeServidor"
-                            lidos += (tamCampo-1);
-
-                            if (lidos != indicTam+4) {   //se o registro ainda nao terminou...
-                                b = fgetc(readFile);    //leio o proximo byte do registro
-                                lidos += 1;
-
-                                if (b == '@') {
-                                    //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                    fseek(readFile, indicTam+4 - lidos, SEEK_CUR);
-                                }
-                                else {
-                                    ungetc(b, readFile);    //"devolvo" o byte lido para o arquivo
-                                    lidos -= 1;
-
-                                    fread(&tamCampo, 4, 1, readFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                    lidos += 4;
-
-                                    fgetc(readFile);   //pulo a tag do campo
-                                    lidos += 1;
-
-                                    char valor[100];
-                                    fread(valor, 1, tamCampo-1, readFile);  //leio o valor do campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                    if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                        mostraRegistroMeta(readFile, &cabecalho);
-                                        achou = 1;
-                                    }
-                                    else {
-                                        fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                    }
-                                }
-                            }
-                        }
-                        else {  //ele existe
-                            char valor[100];
-                            fread(valor, 1, tamCampo-1, readFile);  //leio o valor do campo "nomeServidor"
-                            lidos += (tamCampo-1);
-
-                            fseek(readFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                            if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                mostraRegistroMeta(readFile, &cabecalho);
-                                achou = 1;
-                            }
-                            else {
-                                fseek(readFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                            }
-                        }
-                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                 }
-
-                lidos = 0;
             }
 
-            else if (b == '*') {    //se ele esta removido...
-                int pulo = 0;
-                fread(&pulo, 4, 1, readFile);   //lera o indicador de tamanho do registro (4 bytes)
-                fseek(readFile, pulo, SEEK_CUR);    //pula o registro
+            else if (!strcmp(nomeCampo, "telefoneServidor")) {    //se o campo a ser buscado eh "telefoneServidor"...
+                if (!strcmp(valorCampo, "NULO")) {  //se o valor a ser buscado eh nulo...
+                    if (registro.telefoneServidor[0] == '\0') {
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
+                else {  //o valor a ser buscado nao eh nulo
+                    if (!strcmp(registro.telefoneServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
             }
 
-            b = fgetc(readFile);
+            else if (!strcmp(nomeCampo, "nomeServidor")) {    //se o campo a ser buscado eh "nomeServidor"...
+                if (!strcmp(valorCampo, "NULO")) {  //se o valor a ser buscado eh nulo...
+                    if (registro.nomeServidor == NULL) {
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
+                else {  //o valor a ser buscado nao eh nulo
+                    if (registro.nomeServidor != NULL && !strcmp(registro.nomeServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
+            }
+
+            else if (!strcmp(nomeCampo, "cargoServidor")) {    //se o campo a ser buscado eh "cargoServidor"...
+                if (!strcmp(valorCampo, "NULO")) {  //se o valor a ser buscado eh nulo...
+                    if (registro.cargoServidor == NULL) {
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
+                else {  //o valor a ser buscado nao eh nulo
+                    if (registro.cargoServidor != NULL && !strcmp(registro.cargoServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                        mostraRegistroMeta(readFile, &cabecalho);
+                        achou = 1;
+                    }
+                    fseek(readFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                }
+            }
+
+            else {  //o usuario digitou errado o nome do campo
+                printf("Falha no processamento do arquivo.");
+                return;
+            }
         }
-    }
-    else {  //o usuario digitou errado o nome do campo
-        printf("Falha no processamento do arquivo.");
-        return;
+        b = fgetc(readFile);
     }
 
     if (!achou) {
@@ -1109,6 +983,7 @@ void removeReg() {
     int n;      //numero de remocoes a serem realizadas
     char nomeCampo[51];    //campo a ser considerado na busca
     byte valorCampo[200];    //valor a ser considerado na busca
+    regDados registro;  //estrutura que será utilizada para guardar os registros lidos do arquivo binario
 
     scanf("%50s", fileName);
     scanf("%d", &n);
@@ -1141,522 +1016,146 @@ void removeReg() {
           return;
         }
 
-        //aqui comeca a comparacao por campos
+        while (!feof(binFile)) {
+            ungetc(b, binFile); //"devolvo" o byte lido para o arquivo binario
+            leRegistro(binFile, &registro);
+            int indicTam = registro.tamanhoRegistro;
 
-        int lidos = 0;    //guardara provisoriamente quantos bytes ja se leram de um registro
-
-        if (strcmp(nomeCampo, "idServidor") == 0) {     //se o campo a ser buscado eh "idServidor"...
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    int valor;
-                    fread(&valor, 4, 1, binFile);  //leio o valor do campo "idServidor"
-                    lidos += 4;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (valor == atoi(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
+            if (registro.removido == '*') {   //o registro esta removido
+                fseek(binFile, indicTam+5, SEEK_CUR);   //se o registro esta removido, apenas o pulo
+            }
+            else if (registro.removido == '-') {   //o registro pode ser manipulado
+                if (!strcmp(nomeCampo, "idServidor")) {    //se o campo a ser buscado eh "idServidor"...
+                    if (registro.idServidor == atoi(valorCampo)) {    //se o valor do campo no registro lido eh igual ao do dado como criterio de busca...
                         long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
                         fputc('*', binFile);    //marco o registro como REMOVIDO
                         adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
                         completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
                         break;  //ja que o numero do idServidor eh unico, se acharmos um igual nao precisaremos mais continuar procurando
                     }
-
-                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                    lidos = 0;
-                }
-
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
-
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "salarioServidor") == 0) {     //se o campo a ser buscado eh "salarioServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-                valorCampo[0] = '-';
-                valorCampo[1] = '1';
-                valorCampo[2] = '\0';
-            }
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                    lidos += 4;
-
-                    double valor;
-                    fread(&valor, 8, 1, binFile);  //leio o valor do campo "salarioServidor"
-                    lidos += 8;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (valor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                    else {
+                        fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                     }
-
-                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                    lidos = 0;
                 }
 
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
-
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "telefoneServidor") == 0) {     //se o campo a ser buscado eh "telefoneServidor"...
-
-            char *valorSemAspas = strtok(valorCampo, "\"");     //retiro as aspas da string (para efeitos de comparacao)
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-                valorSemAspas[0] = '\0';
-            }
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                    lidos += 8;
-
-                    char valor[15];
-                    fread(valor, 1, 14, binFile);  //leio o valor do campo "telefoneServidor"
-                    valor[14] = '\0';   //"encerro" a string
-                    lidos += 14;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (strcmp(valor, valorSemAspas) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-                    }
-
-                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                    lidos = 0;
-                }
-
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
-
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "nomeServidor") == 0) {     //se o campo a ser buscado eh "nomeServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos == indicTam+4) {  //se o registro ja terminou, nao possui o campo "nomeServidor"
-                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
+                else if (!strcmp(nomeCampo, "salarioServidor")) {    //se o campo a ser buscado eh "salarioServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.salarioServidor == -1) {
                             long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
                             fputc('*', binFile);    //marco o registro como REMOVIDO
                             adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
                             completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
                         }
-                        else {   //o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                fputc('*', binFile);    //marco o registro como REMOVIDO
-                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                fseek(binFile, indicTam+4, SEEK_CUR);   //pulo o lixo "acoplado" a ele
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'c') {   //o campo "nomeServidor" nao existe nesse registro de dados
-                                    fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                    long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                    fputc('*', binFile);    //marco o registro como REMOVIDO
-                                    adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                    completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                    fseek(binFile, indicTam+4, SEEK_CUR);  //vou para o proximo registro
-                                }
-                                else {
-                                    fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                }
-                            }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                         }
-
-                        lidos = 0;
                     }
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
-                }
-            }
-            else {
-                char *valorSemAspas = strtok(valorCampo, "\"");     //retiro as aspas da string (para efeitos de comparacao)
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos != indicTam+4) {   //se o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {
-                                //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'c') {   //o campo "nomeServidor" nao existe nesse registro de dados
-                                    fseek(binFile, tamCampo-1, SEEK_CUR);  //vou para o proximo registro
-                                }
-                                else {  //ele existe
-                                    char valor[100];
-                                    fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                    if (strcmp(valor, valorSemAspas) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-                                    }
-
-                                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                }
-                            }
-                        }
-
-                        lidos = 0;
-                    }
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
-                }
-            }
-
-        }
-        else if (strcmp(nomeCampo, "cargoServidor") == 0) {     //se o campo a ser buscado eh "cargoServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos == indicTam+4) {   //se o registro ja terminou, nao tem o campo "cargoServidor"
-                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (registro.salarioServidor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
                             long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
                             fputc('*', binFile);    //marco o registro como REMOVIDO
                             adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
                             completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
                         }
-                        else {   //o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                fputc('*', binFile);    //marco o registro como REMOVIDO
-                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                fseek(binFile, indicTam+4, SEEK_CUR);   //pulo o lixo "acoplado" a ele
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'n') {   //o campo "cargoServidor" pode nao existir
-                                    fseek(binFile, tamCampo-1, SEEK_CUR);  //pulo o campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    if (lidos == indicTam+4) {   //se o registro ja terminou, nao possui o campo "cargoServidor"
-                                        fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                        fseek(binFile, indicTam+4, SEEK_CUR);   //vou para o proximo registro
-                                    }
-                                    else {   //se o registro ainda nao terminou, ha chance do campo existir
-                                        b = fgetc(binFile);    //leio o proximo byte do registro
-                                        lidos += 1;
-
-                                        if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                            fseek(binFile, indicTam+4, SEEK_CUR);   //pulo o lixo "acoplado" a ele
-                                        }
-                                        else {
-                                            fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                        }
-                                    }
-                                }
-                                else {
-                                    fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                }
-                            }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                         }
-
-                        lidos = 0;
                     }
+                }
 
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
+                else if (!strcmp(nomeCampo, "telefoneServidor")) {    //se o campo a ser buscado eh "telefoneServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.telefoneServidor[0] == '\0') {
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
                     }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (!strcmp(registro.telefoneServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
 
-                    b = fgetc(binFile);
+                else if (!strcmp(nomeCampo, "nomeServidor")) {    //se o campo a ser buscado eh "nomeServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.nomeServidor == NULL) {
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        char *valorSemAspas = strtok(valorCampo, "\"");     //retiro as aspas da string (para efeitos de comparacao)
+
+                        if (registro.nomeServidor != NULL && !strcmp(registro.nomeServidor, valorSemAspas)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
+
+                else if (!strcmp(nomeCampo, "cargoServidor")) {    //se o campo a ser buscado eh "cargoServidor"...
+                    char *valorSemAspas = strtok(valorCampo, "\"");     //retiro as aspas da string (para efeitos de comparacao)
+
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.cargoServidor == NULL) {
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (registro.cargoServidor != NULL && !strcmp(registro.cargoServidor, valorSemAspas)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                            fputc('*', binFile);    //marco o registro como REMOVIDO
+                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
+
+                else {  //o usuario digitou errado o nome do campo
+                    printf("Falha no processamento do arquivo.");
+                    return;
                 }
             }
-            else {
-                char *valorSemAspas = strtok(valorCampo, "\"");     //retiro as aspas da string (para efeitos de comparacao)
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos != indicTam+4) {   //se o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {
-                                //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'n') {   //o campo "cargoServidor" pode nao existir
-                                    fseek(binFile, tamCampo-1, SEEK_CUR);  //pulo o campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    if (lidos != indicTam+4) {   //se o registro ainda nao terminou...
-                                        b = fgetc(binFile);    //leio o proximo byte do registro
-                                        lidos += 1;
-
-                                        if (b == '@') {
-                                            //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                            fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                                        }
-                                        else {
-                                            ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                            lidos -= 1;
-
-                                            fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                            lidos += 4;
-
-                                            fgetc(binFile);   //pulo a tag do campo
-                                            lidos += 1;
-
-                                            char valor[100];
-                                            fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                            lidos += (tamCampo-1);
-
-                                            fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                            if (strcmp(valor, valorSemAspas) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                                fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                                fputc('*', binFile);    //marco o registro como REMOVIDO
-                                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-                                            }
-
-                                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                        }
-                                    }
-                                }
-                                else {  //ele existe
-                                    char valor[100];
-                                    fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                    if (strcmp(valor, valorSemAspas) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-                                    }
-
-                                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                }
-                            }
-                        }
-
-                        lidos = 0;
-                    }
-
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
-                }
-            }
-
-        }
-        else {  //o usuario digitou errado o nome do campo
-            printf("Falha no processamento do arquivo.");
-            return;
+            b = fgetc(binFile);
         }
 
         fseek(binFile, TAMPAG, SEEK_SET);    //volto o ponteiro de leitura para o inicio da segunda pagina de disco (a que inicia os registros de dados)
@@ -1910,94 +1409,6 @@ void adicionaReg() {
 }
 
 /*
-    Le os campos de um registro presente em um
-    arquivo binario anteriormente gerado por
-    este programa e guarda seus valores em uma
-    estrutura passada por parametro pelo usuario.
-    A funcao assume que o ponteiro de leitura do
-    arquivo estara no inicio do registro ao ser
-    chamada.
-
-    Parametros:
-        FILE *file - arquivo binario contendo o
-    registro a ser lido
-        regDados *registro - estrutura para onde
-    devem ser copiados os dados do registro
-*/
-void leRegistro(FILE *file, regDados *registro) {
-    long ini = ftell(file);    //guardo a posicao de inicio do registro
-
-    registro->removido = fgetc(file);   //leio o campo "removido"
-    fread(&(registro->tamanhoRegistro), 4, 1, file);    //leio o indicador de tamanho do registro
-    fread(&(registro->encadeamentoLista), 8, 1, file);  //leio o campo "encadeamentoLista"
-    fread(&(registro->idServidor), 4, 1, file);     //leio o campo "idServidor"
-    fread(&(registro->salarioServidor), 8, 1, file);    //leio o campo "salarioServidor"
-    fread(registro->telefoneServidor, 1, 14, file);     //leio o campo "telefoneServidor"
-
-    if ((ftell(file)-ini) == (registro->tamanhoRegistro+5)) {    //se o registro ja acabou, os campos "nomeServidor" e "cargoServidor" sao nulos e, portanto, nao presentes no arquivo
-        //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
-        //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
-        registro->nomeServidor = NULL;
-        registro->cargoServidor = NULL;
-    }
-    else {
-        char c = fgetc(file);
-        if (c == '@') {     //eh o ultimo registro de uma pagina de disco
-            //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
-            //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
-            registro->nomeServidor = NULL;
-            registro->cargoServidor = NULL;
-        }
-        else {
-            ungetc(c, file);    //devolvo o caracter para a entrada
-
-            int tamCampo;
-            fread(&(tamCampo), 4, 1, file);     //leio o indicador de tamanho do campo
-            char tag = fgetc(file);     //leio a tag do campo
-
-            if (tag == 'n') {
-                registro->tamCampo4 = tamCampo;
-                registro->tagCampo4 = tag;
-                registro->nomeServidor = malloc(100*sizeof(char));
-                fread(registro->nomeServidor, 1, tamCampo-1, file);   //leio o campo "nomeServidor"
-
-                if ((ftell(file)-ini) == (registro->tamanhoRegistro+5)) {    //se o registro ja acabou, o campo "cargoServidor" eh nulo e, portanto, nao presente no arquivo
-                    //if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
-                    registro->cargoServidor = NULL;
-                }
-                else {
-                    c = fgetc(file);
-                    if (c == '@') {     //eh o ultimo registro de uma pagina de disco
-                        ///if (registro->cargoServidor != NULL) free(registro->cargoServidor); //libero memoria anteriormente alocada
-                        registro->cargoServidor = NULL;
-                    }
-                    else {
-                        ungetc(c, file);    //"devolvo" o byte lido para o arquivo
-                        fread(&(registro->tamCampo5), 4, 1, file);     //leio o indicador de tamanho do campo
-                        registro->tagCampo5 = fgetc(file);     //leio a tag do campo
-                        registro->cargoServidor = malloc(100*sizeof(char));
-                        fread(registro->cargoServidor, 1, registro->tamCampo5-1, file);   //leio o campo "cargoServidor"
-                    }
-                }
-            }
-            else {
-                //if (registro->nomeServidor != NULL) free(registro->nomeServidor);   //libero memoria anteriormente alocada
-                registro->nomeServidor = NULL;
-
-                registro->tamCampo5 = tamCampo;
-                registro->tagCampo5 = tag;
-                registro->cargoServidor = malloc(100*sizeof(char));
-                fread(registro->cargoServidor, 1, tamCampo-1, file);
-            }
-        }
-    }
-
-    fseek(file, ini, SEEK_SET);     //volto ao inicio do registro
-
-    return;
-}
-
-/*
     Muda o campo de um registro de dados, de acordo
     com valores passados para a funcao.
 
@@ -2101,6 +1512,7 @@ void atualizaReg() {
     byte valorCampo[200];   //valor a ser considerado na busca
     char nomeAtualiza[51];      //nome do campo a ser atualizado
     byte valorAtualiza[200];    //valor do campo a ser atualizado
+    regDados registro;  //estrutura que será utilizada para guardar os registros lidos do arquivo binario
     long long posUltimoReg = -1;  //ira guardar o byte offset do ultimo registro do arquivo
 
     scanf("%50s", fileName);
@@ -2148,31 +1560,18 @@ void atualizaReg() {
           return;
         }
 
-        //aqui comeca a comparacao por campos
+        while (!feof(binFile)) {
+            ungetc(b, binFile); //"devolvo" o byte lido para o arquivo binario
+            leRegistro(binFile, &registro);
+            int indicTam = registro.tamanhoRegistro;
 
-        int lidos = 0;    //guardara provisoriamente quantos bytes ja se leram de um registro
-        regDados registro;  //estrutura de dados que guardara os dados lidos de um registro
+            if (registro.removido == '*') {   //o registro esta removido
+                fseek(binFile, indicTam+5, SEEK_CUR);   //se o registro esta removido, apenas o pulo
+            }
+            else if (registro.removido == '-') {   //o registro pode ser manipulado
+                if (!strcmp(nomeCampo, "idServidor")) {    //se o campo a ser buscado eh "idServidor"...
+                    if (registro.idServidor == atoi(valorCampo)) {    //se o valor do campo no registro lido eh igual ao do dado como criterio de busca...
 
-        if (strcmp(nomeCampo, "idServidor") == 0) {     //se o campo a ser buscado eh "idServidor"...
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    int valor;
-                    fread(&valor, 4, 1, binFile);  //leio o valor do campo "idServidor"
-                    lidos += 4;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (valor == atoi(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
                         int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
 
                         if (diff < 0) {     //o registro novo eh maior do que o original
@@ -2193,179 +1592,15 @@ void atualizaReg() {
 
                         break;  //ja que o numero do idServidor eh unico, se acharmos um igual nao precisaremos mais continuar procurando
                     }
-
-                    fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                    lidos = 0;
-                }
-
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
-
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "salarioServidor") == 0) {     //se o campo a ser buscado eh "salarioServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-                valorCampo[0] = '-';
-                valorCampo[1] = '1';
-                valorCampo[2] = '\0';
-            }
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                    lidos += 4;
-
-                    double valor;
-                    fread(&valor, 8, 1, binFile);  //leio o valor do campo "salarioServidor"
-                    lidos += 8;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (valor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                        int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                        if (diff < 0) {     //o registro novo eh maior do que o original
-                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                            long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                            if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                        }
-                        else {
-                            insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                            for (int i = 0; i < diff; i++) {
-                                fputc('@', binFile);    //completo o registro com lixo
-                            }
-                        }
-                    }
                     else {
-                        fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                        fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                     }
-
-                    lidos = 0;
                 }
 
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
+                else if (!strcmp(nomeCampo, "salarioServidor")) {    //se o campo a ser buscado eh "salarioServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.salarioServidor == -1) {
 
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "telefoneServidor") == 0) {     //se o campo a ser buscado eh "telefoneServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-                valorCampo[0] = '\0';
-            }
-
-            while (!feof(binFile)) {
-                if (b == '-') {     //se ele nao esta removido...
-                    int indicTam;
-                    fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                    lidos += 8;
-
-                    fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                    lidos += 4;
-
-                    fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                    lidos += 8;
-
-                    char valor[15];
-                    fread(valor, 1, 14, binFile);  //leio o valor do campo "telefoneServidor"
-                    valor[14] = '\0';   //"encerro" a string
-                    lidos += 14;
-
-                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                    if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                        int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                        if (diff < 0) {     //o registro novo eh maior do que o original
-                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                            long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                            if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                        }
-                        else {
-                            insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                            for (int i = 0; i < diff; i++) {
-                                fputc('@', binFile);    //completo o registro com lixo
-                            }
-                        }
-
-                    }
-                    else {
-                        fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                    }
-
-                    lidos = 0;
-                }
-
-                else if (b == '*') {    //se ele esta removido...
-                    int pulo = 0;
-                    fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                    fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                }
-
-                b = fgetc(binFile);
-            }
-
-        }
-        else if (strcmp(nomeCampo, "nomeServidor") == 0) {     //se o campo a ser buscado eh "nomeServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos == indicTam+4) {  //se o registro ja terminou, nao possui o campo "nomeServidor"
-                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                            leRegistro(binFile, &registro); //importo o registro do arquivo binario
                             int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
 
                             if (diff < 0) {     //o registro novo eh maior do que o original
@@ -2376,6 +1611,7 @@ void atualizaReg() {
 
                                 long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
                                 if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
                             }
                             else {
                                 insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
@@ -2385,200 +1621,13 @@ void atualizaReg() {
                             }
 
                         }
-                        else {   //o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                if (diff < 0) {     //o registro novo eh maior do que o original
-                                    long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                    fputc('*', binFile);    //marco o registro como REMOVIDO
-                                    adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                    completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                    long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                    if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                }
-                                else {
-                                    insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                    for (int i = 0; i < diff; i++) {
-                                        fputc('@', binFile);    //completo o registro com lixo
-                                    }
-                                }
-
-                                fseek(binFile, indicTam+4, SEEK_CUR);   //pulo o lixo "acoplado" a ele
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'c') {   //o campo "nomeServidor" nao existe nesse registro de dados
-                                    fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                    leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                    int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                    if (diff < 0) {     //o registro novo eh maior do que o original
-                                        long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                        fputc('*', binFile);    //marco o registro como REMOVIDO
-                                        adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                        completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                        long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                        if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                    }
-                                    else {
-                                        insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                        for (int i = 0; i < diff; i++) {
-                                            fputc('@', binFile);    //completo o registro com lixo
-                                        }
-                                    }
-
-                                    fseek(binFile, indicTam+4, SEEK_CUR);  //vou para o proximo registro
-                                }
-                                else {
-                                    fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                }
-                            }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                         }
-
-                        lidos = 0;
                     }
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (registro.salarioServidor == atof(valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
 
-                    b = fgetc(binFile);
-                }
-            }
-            else {
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos != indicTam+4) {   //se o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {
-                                //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'c') {   //o campo "nomeServidor" nao existe nesse registro de dados
-                                    fseek(binFile, indicTam+4 - lidos, SEEK_CUR);  //vou para o proximo registro
-                                }
-                                else {  //ele existe
-                                    char valor[200];
-                                    fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                    if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                        int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                        if (diff < 0) {     //o registro novo eh maior do que o original
-                                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                            long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                            if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                        }
-                                        else {
-                                            insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                            for (int i = 0; i < diff; i++) {
-                                                fputc('@', binFile);    //completo o registro com lixo
-                                            }
-                                        }
-                                    }
-                                    else {
-                                        fseek(binFile, indicTam+4, SEEK_CUR);   //pulo o lixo "acoplado" a ele
-                                    }
-
-                                }
-                            }
-                        }
-
-                        lidos = 0;
-                    }
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
-                }
-            }
-
-        }
-        else if (strcmp(nomeCampo, "cargoServidor") == 0) {     //se o campo a ser buscado eh "cargoServidor"...
-
-            if (strcmp(valorCampo, "NULO") == 0) {  //se o valor do campo for nulo...
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos == indicTam+4) {   //se o registro ja terminou, nao tem o campo "cargoServidor"
-                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                            leRegistro(binFile, &registro); //importo o registro do arquivo binario
                             int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
 
                             if (diff < 0) {     //o registro novo eh maior do que o original
@@ -2589,7 +1638,7 @@ void atualizaReg() {
 
                                 long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
                                 if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                fseek(binFile, indicTam+4, SEEK_CUR);   //vou para o proximo registro
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
                             }
                             else {
                                 insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
@@ -2597,280 +1646,191 @@ void atualizaReg() {
                                     fputc('@', binFile);    //completo o registro com lixo
                                 }
                             }
+
                         }
-                        else {   //o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                if (diff < 0) {     //o registro novo eh maior do que o original
-                                    long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                    fputc('*', binFile);    //marco o registro como REMOVIDO
-                                    adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                    completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                    long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                    if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                    fseek(binFile, indicTam+4, SEEK_CUR);   //vou para o proximo registro
-                                }
-                                else {
-                                    insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                    for (int i = 0; i < diff; i++) {
-                                        fputc('@', binFile);    //completo o registro com lixo
-                                    }
-                                }
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'n') {   //o campo "cargoServidor" pode nao existir
-                                    fseek(binFile, tamCampo-1, SEEK_CUR);  //pulo o campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    if (lidos == indicTam+4) {   //se o registro ja terminou, nao possui o campo "cargoServidor"
-                                        fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                        int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                        if (diff < 0) {     //o registro novo eh maior do que o original
-                                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                            long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                            if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                            fseek(binFile, indicTam+4, SEEK_CUR);   //vou para o proximo registro
-                                        }
-                                        else {
-                                            insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                            for (int i = 0; i < diff; i++) {
-                                                fputc('@', binFile);    //completo o registro com lixo
-                                            }
-                                        }
-                                    }
-                                    else {   //se o registro ainda nao terminou, ha chance do campo existir
-                                        b = fgetc(binFile);    //leio o proximo byte do registro
-                                        lidos += 1;
-
-                                        if (b == '@') {    //ele eh o ultimo de uma pagina de disco
-                                            fseek(binFile, -(lidos+1), SEEK_CUR);    //volto ao inicio do registro
-                                            leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                            if (diff < 0) {     //o registro novo eh maior do que o original
-                                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                                fputc('*', binFile);    //marco o registro como REMOVIDO
-                                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                                fseek(binFile, indicTam+4, SEEK_CUR);   //vou para o proximo registro
-                                            }
-                                            else {
-                                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                                for (int i = 0; i < diff; i++) {
-                                                    fputc('@', binFile);    //completo o registro com lixo
-                                                }
-                                            }
-                                        }
-                                        else {
-                                            fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                        }
-                                    }
-                                }
-                                else {
-                                    fseek(binFile, indicTam+4-lidos, SEEK_CUR);  //vou para o proximo registro
-                                }
-                            }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
                         }
-
-                        lidos = 0;
                     }
-
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
-                }
-            }
-            else {
-
-                while (!feof(binFile)) {
-                    if (b == '-') {     //se ele nao esta removido...
-                        /* if (strcmp(valorCampo, "ENGENHEIRO") == 0 && ( strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA\"") == 0 || strcmp(valorAtualiza, "\"ENGENHEIRO ELETRICISTA") == 0)) {
-                            printf("\n\nByte Offset atual: %ld\n", ftell(binFile)-1);
-                            regDados reg;
-                            fseek(binFile, -1, SEEK_CUR);
-                            leRegistro(binFile, &reg);
-                            fseek(binFile, 1, SEEK_CUR);
-                            printRegistro(&reg);
-                        } */
-                        int indicTam;
-                        fread(&indicTam, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do registro
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "encadeamentoLista" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 4, SEEK_CUR);  //pulo o campo "idServidor" (4 bytes)
-                        lidos += 4;
-
-                        fseek(binFile, 8, SEEK_CUR);  //pulo o campo "salarioServidor" (8 bytes)
-                        lidos += 8;
-
-                        fseek(binFile, 14, SEEK_CUR);  //pulo o campo "telefoneServidor" (14 bytes)
-                        lidos += 14;
-
-                        if (lidos != indicTam+4) {   //se o registro nao terminou...
-                            b = fgetc(binFile);    //leio o proximo byte do registro
-                            lidos += 1;
-
-                            if (b == '@') {
-                                //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                            }
-                            else {
-                                ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                lidos -= 1;
-
-                                int tamCampo;
-                                fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                lidos += 4;
-
-                                char tag = fgetc(binFile);   //leio a tag do campo
-                                lidos += 1;
-
-                                if (tag == 'n') {   //o campo "cargoServidor" pode nao existir
-                                    fseek(binFile, tamCampo-1, SEEK_CUR);  //pulo o campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    if (lidos != indicTam+4) {   //se o registro ainda nao terminou...
-                                        b = fgetc(binFile);    //leio o proximo byte do registro
-                                        lidos += 1;
-
-                                        if (b == '@') {
-                                            //ele eh o ultimo de uma pagina de disco, e o lixo "acoplado" a ele deve ser pulado
-                                            fseek(binFile, indicTam+4 - lidos, SEEK_CUR);
-                                        }
-                                        else {
-                                            ungetc(b, binFile);    //"devolvo" o byte lido para o arquivo
-                                            lidos -= 1;
-
-                                            fread(&tamCampo, 4, 1, binFile);   //leio e armazeno o valor do indicador de tamanho do campo
-                                            lidos += 4;
-
-                                            fgetc(binFile);   //pulo a tag do campo
-                                            lidos += 1;
-
-                                            char valor[200];
-                                            fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                            lidos += (tamCampo-1);
-
-                                            fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                            if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                                fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                                leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                                    if (registro.idServidor == 2416299) printRegistro(&registro);
-                                                int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-                                                    if (registro.idServidor == 2416299) printRegistro(&registro);
-                                                    if (registro.idServidor == 2416299) printf("Diff: %d\n", diff);
-                                                if (diff < 0) {     //o registro novo eh maior do que o original
-                                                    long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                                    fputc('*', binFile);    //marco o registro como REMOVIDO
-                                                    adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                                    completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                                    long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                                    if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                                    fseek(binFile, indicTam+4 - lidos, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                                }
-                                                else {
-                                                    insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                                    for (int i = 0; i < diff; i++) {
-                                                        fputc('@', binFile);    //completo o registro com lixo
-                                                    }
-                                                }
-                                            }
-                                            else {
-                                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                            }
-
-                                        }
-                                    }
-                                }
-                                else {  //ele existe
-                                    char valor[200];
-                                    fread(valor, 1, tamCampo-1, binFile);  //leio o valor do campo "nomeServidor"
-                                    lidos += (tamCampo-1);
-
-                                    fseek(binFile, -lidos, SEEK_CUR);    //volto ao inicio do registro
-
-                                    if (strcmp(valor, valorCampo) == 0) {    //se o valor lido eh igual ao do dado como criterio de busca...
-                                        fseek(binFile, -1, SEEK_CUR);   //vou para o comeco do campo "removido"
-                                        leRegistro(binFile, &registro); //importo o registro do arquivo binario
-                                        int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
-
-                                        if (diff < 0) {     //o registro novo eh maior do que o original
-                                            long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
-                                            fputc('*', binFile);    //marco o registro como REMOVIDO
-                                            adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
-                                            completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
-
-                                            long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
-                                            if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
-                                            fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                        }
-                                        else {
-                                            insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
-                                            for (int i = 0; i < diff; i++) {
-                                                fputc('@', binFile);    //completo o registro com lixo
-                                            }
-                                        }
-                                    }
-                                    else {
-                                        fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
-                                    }
-
-                                }
-                            }
-                        }
-
-                        lidos = 0;
-                    }
-
-                    else if (b == '*') {    //se ele esta removido...
-                        int pulo = 0;
-                        fread(&pulo, 4, 1, binFile);   //lera o indicador de tamanho do registro (4 bytes)
-                        fseek(binFile, pulo, SEEK_CUR);    //pula o registro
-                    }
-
-                    b = fgetc(binFile);
                 }
 
-            }
+                else if (!strcmp(nomeCampo, "telefoneServidor")) {    //se o campo a ser buscado eh "telefoneServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.telefoneServidor[0] == '\0') {
 
-        }
-        else {  //o usuario digitou errado o nome do campo
-            printf("Falha no processamento do arquivo.");
-            return;
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (!strcmp(registro.telefoneServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
+
+                else if (!strcmp(nomeCampo, "nomeServidor")) {    //se o campo a ser buscado eh "nomeServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.nomeServidor == NULL) {
+
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (registro.nomeServidor != NULL && !strcmp(registro.nomeServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
+
+                else if (!strcmp(nomeCampo, "cargoServidor")) {    //se o campo a ser buscado eh "cargoServidor"...
+                    if (strcmp(valorCampo, "NULO") == 0) {  //se o valor a ser buscado eh nulo...
+                        if (registro.cargoServidor == NULL) {
+
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                    else {  //o valor a ser buscado nao eh nulo
+                        if (registro.cargoServidor != NULL && !strcmp(registro.cargoServidor, valorCampo)) {    //se o valor lido eh igual ao do dado como criterio de busca...
+
+                            int diff = mudaRegistro(&registro, nomeAtualiza, valorAtualiza);    //atualizo o registro (fora do arquivo)
+
+                            if (diff < 0) {     //o registro novo eh maior do que o original
+                                long long byteOffset = ftell(binFile);  //guardo o byte offset do registro a ser logicamente removido
+                                fputc('*', binFile);    //marco o registro como REMOVIDO
+                                adicionaLista(binFile, byteOffset, indicTam);    //adiciono o registro a lista de removidos
+                                completaLixo(binFile);  //sobreescrevo todos os campos do registro (menos encadeamentoLista) com lixo
+
+                                long long temp = achaPosicaoInsere(binFile, &registro, posUltimoReg);  //adiciona o registro novo ao arquivo
+                                if (temp != -1) posUltimoReg = temp;    //se o valor retornado pela funcao atualiza o BO do ultimo registro da lista, entao este valor deve ser guardado
+                                fseek(binFile, indicTam+4, SEEK_CUR);    //vou para o proximo registro (+4 por conta dos bytes do indicador de tamanho, que ele mesmo nao contabiliza)
+                            }
+                            else {
+                                insereRegistro(binFile, &registro); //gravo o registro atualizado no arquivo
+                                for (int i = 0; i < diff; i++) {
+                                    fputc('@', binFile);    //completo o registro com lixo
+                                }
+                            }
+
+                        }
+                        else {
+                            fseek(binFile, indicTam+5, SEEK_CUR);   //vou para o proximo registro (+5 por conta dos bytes do indicador de tamanho e do campo "removido")
+                        }
+                    }
+                }
+
+                else {  //o usuario digitou errado o nome do campo
+                    printf("Falha no processamento do arquivo.");
+                    return;
+                }
+            }
+            b = fgetc(binFile);
         }
 
         fseek(binFile, TAMPAG, SEEK_SET);    //volto o ponteiro de leitura para o inicio da segunda pagina de disco (a que inicia os registros de dados)
